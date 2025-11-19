@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>پروژه نقشه GIS باغ گیاه‌شناسی</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: sans-serif;
+            background: #f4f4f4;
+            color: #333;
+        }
+        header {
+            background: #3a6f41;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        nav {
+            background: #2f5c35;
+            padding: 10px;
+            text-align: center;
+        }
+        nav a {
+            color: #fff;
+            margin: 0 15px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 30px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        #map { height: 520px; margin-top: 20px; border-radius: 10px; }
+
+        /* پنل اطلاعات */
+        #sidePanel {
+            position: fixed;
+            top: 0;
+            right: -380px;
+            width: 360px;
+            height: 100%;
+            background: #ffffff;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.2);
+            padding: 20px;
+            overflow-y: auto;
+            transition: 0.3s;
+            z-index: 900;
+        }
+        #sidePanel.open { right: 0; }
+        #sidePanel h3 { margin-top: 0; color:#2f5c35; }
+        #closePanel {
+            background:#c62828; color:white; padding:5px 10px;
+            border:none; cursor:pointer; border-radius:8px;
+        }
+
+        /* Legend کوچک در گوشه نقشه */
+        .legend {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(255,255,255,0.95);
+            padding: 8px 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            z-index: 1000;
+            font-size: 13px;
+        }
+
+        /* Loader */
+        #loader{
+            position:fixed;top:0;left:0;width:100%;height:100%;background:white;display:flex;align-items:center;justify-content:center;z-index:2000;font-size:20px;font-weight:bold;
+        }
+
+        /* واکنش‌گرا */
+        @media (max-width: 768px) {
+            #sidePanel { width: 100%; }
+            .container { margin: 10px; }
+        }
+    </style>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet.heat برای هیت‌مپ (اگر بخواهید) -->
+    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+</head>
+<body>
+
+<header><h1>پروژه GIS باغ گیاه‌شناسی</h1></header>
+<nav>
+    <a href="#map-section">نقشه</a>
+    <a href="#info">معرفی پروژه</a>
+    <a href="#plants">گونه‌ها</a>
+</nav>
+
+<!-- Loader -->
+<div id="loader">در حال بارگذاری نقشه...</div>
+
+<div id="sidePanel">
+    <button id="closePanel">بستن</button>
+    <h3 id="panelTitle"></h3>
+    <div id="panelContent"></div>
+</div>
+
+<div class="container" id="info">
+    <h2>معرفی پروژه</h2>
+    <p>نسخه پیشرفته شامل لایه‌های GIS، دسته‌بندی لایه‌ها، پنل اطلاعات، بارگذاری خودکار GeoJSON و راهنمای نقشه است.</p>
+</div>
+
+<div class="container" id="map-section">
+    <h2>نقشه پیشرفته باغ گیاه‌شناسی</h2>
+    <div id="map" style="position:relative;">
+        <div class="legend" id="miniLegend">
+            <div><span style="display:inline-block;width:18px;height:8px;background:brown;margin-left:6px;"></span> مسیرها</div>
+            <div><span style="display:inline-block;width:18px;height:8px;background:#2f5c35;opacity:0.6;margin-left:6px;"></span> ناحیه‌ها</div>
+            <div style="margin-top:4px;"><img src="https://cdn-icons-png.flaticon.com/512/685/685352.png" width="14" style="vertical-align:middle;margin-left:8px;"> درختان</div>
+        </div>
+    </div>
+</div>
+
+<div class="container" id="plants">
+    <h2>گونه‌های گیاهی</h2>
+    <p>برای مشاهده جزئیات هر گونه، روی علامت آن در نقشه کلیک کنید یا از پنل راست استفاده کنید.</p>
+</div>
+
+<footer style="text-align:center;padding:20px 0;">© 2025 - پروژه GIS باغ گیاه‌شناسی</footer>
+
+<script>
+    // --- مقداردهی اولیه نقشه ---
+    var map = L.map('map').setView([36.857, 54.431], 16);
+    var base = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+    base.addTo(map);
+
+    // --- لایه‌ها ---
+    var treesLayer = L.layerGroup();
+    var pathsLayer = L.layerGroup();
+    var zonesLayer = L.layerGroup();
+    var heatLayer = null; // ساخته می‌شود در صورت وجود نقاط
+
+    // --- نمونه fallback در صورت نبود فایل ---
+    var sampleTrees = {
+        "type": "FeatureCollection",
+        "features": [
+            {"type":"Feature","geometry":{"type":"Point","coordinates":[54.4312,36.8573]},"properties":{"name":"بلوط نمونه","info":"(نمونه) درخت بلوط","image":"https://picsum.photos/seed/oak/300"}},
+            {"type":"Feature","geometry":{"type":"Point","coordinates":[54.4308,36.8571]},"properties":{"name":"افرا نمونه","info":"(نمونه) افرا","image":"https://picsum.photos/seed/maple/300"}}
+        ]
+    };
+
+    var samplePaths = {
+        "type":"FeatureCollection",
+        "features":[{ "type":"Feature","geometry":{"type":"LineString","coordinates":[ [54.430,36.857],[54.431,36.8572],[54.432,36.8571] ]},"properties":{"name":"مسیر نمونه"} }]
+    };
+
+    var sampleZones = {
+        "type":"FeatureCollection",
+        "features":[{ "type":"Feature","geometry":{"type":"Polygon","coordinates":[[[54.4305,36.857],[54.4315,36.8574],[54.4312,36.8568],[54.4305,36.857]]]},"properties":{"name":"منطقه نمونه"} }]
+    };
+
+    // --- توابع کمکی ---
+    function openPanel(title, content, image){
+        document.getElementById('panelTitle').innerText = title || '';
+        var html = '<p>' + (content || '') + '</p>';
+        if(image){ html += '<img src="'+image+'" style="width:100%;border-radius:8px;margin-top:8px;">'; }
+        document.getElementById('panelContent').innerHTML = html;
+        document.getElementById('sidePanel').classList.add('open');
+    }
+    document.getElementById('closePanel').onclick = function(){ document.getElementById('sidePanel').classList.remove('open'); };
+
+    // attachPopup: پاپ‌آپ و کلیک برای باز کردن پنل
+    function attachPopup(feature, layer){
+        if(!feature.properties) return;
+        var title = feature.properties.name || 'بدون نام';
+        var info = feature.properties.info || '';
+        var image = feature.properties.image || '';
+        var popupHTML = '<b>' + title + '</b><br>' + info;
+        if(image) popupHTML += '<br><img src="'+image+'" style="width:120px;margin-top:6px;border-radius:6px;">';
+        layer.bindPopup(popupHTML);
+        layer.on('click', function(){ openPanel(title, info, image); });
+    }
+
+    // --- بارگذاری GeoJSON با fallback و هندل خطا ---
+    function loadGeoJSON(path, options, targetLayer, sampleData){
+        return fetch(path)
+            .then(r => {
+                if(!r.ok) throw new Error('فایل پیدا نشد: ' + path);
+                return r.json();
+            })
+            .then(data => {
+                L.geoJSON(data, options).addTo(targetLayer);
+                return data;
+            })
+            .catch(err => {
+                console.warn(err.message);
+                // اگر فایل پیدا نشد یا خطا داشتیم، از sample استفاده می‌کنیم و به کاربر اطلاع می‌دهیم
+                L.geoJSON(sampleData, options).addTo(targetLayer);
+                // نمایش پیغام غیرمزاحم به کاربر (نه alert مزاحم)
+                showToast('فایل ' + path + ' بارگذاری نشد — از دادهٔ نمونه استفاده شد.');
+                return sampleData;
+            });
+    }
+
+    // نمایش پیغام کوتاه در گوشه صفحه
+    function showToast(message, duration=5000){
+        var t = document.createElement('div');
+        t.style.position = 'fixed';
+        t.style.top = '20px';
+        t.style.left = '50%';
+        t.style.transform = 'translateX(-50%)';
+        t.style.background = 'rgba(0,0,0,0.7)';
+        t.style.color = 'white';
+        t.style.padding = '8px 12px';
+        t.style.borderRadius = '6px';
+        t.style.zIndex = 2100;
+        t.innerText = message;
+        document.body.appendChild(t);
+        setTimeout(()=> t.remove(), duration);
+    }
+
+    // --- بارگذاری همه لایه‌ها (به‌صورت اتوماتیک از پوشه /geojson) ---
+    Promise.allSettled([
+        loadGeoJSON('geojson/trees.geojson', {
+            pointToLayer: function(f, latlng){ return L.marker(latlng); },
+            onEachFeature: attachPopup
+        }, treesLayer, sampleTrees),
+
+        loadGeoJSON('geojson/paths.geojson', {
+            style: { color: 'brown', weight: 3 },
+            onEachFeature: attachPopup
+        }, pathsLayer, samplePaths),
+
+        loadGeoJSON('geojson/zones.geojson', {
+            style: { color: '#2f5c35', weight: 2, fillOpacity: 0.2 },
+            onEachFeature: attachPopup
+        }, zonesLayer, sampleZones)
+    ])
+    .then(results => {
+        // پس از تلاش برای بارگذاری، Loader را پنهان کن
+        document.getElementById('loader').style.display = 'none';
+
+        // اضافه کردن لایه‌ها به کنترل و نقشه
+        var overlays = {
+            "درختان": treesLayer,
+            "مسیرها": pathsLayer,
+            "ناحیه‌ها": zonesLayer
+        };
+
+        // اگر دادهٔ درختان وجود داشت، هیت‌مپ هم بساز
+        try{
+            // تلاش برای ساخت نقاط هیت‌مپ از لایهٔ درختان (از داده برگشتی)
+            var treeData = [];
+            // تلاش کنیم داده‌ها را از لایهٔ درختان استخراج کنیم
+            treesLayer.eachLayer(function(layer){
+                if(layer && layer.getLatLng){
+                    var ll = layer.getLatLng();
+                    treeData.push([ll.lat, ll.lng, 0.6]);
+                }
+            });
+            if(treeData.length > 0 && L.heatLayer){
+                heatLayer = L.heatLayer(treeData, { radius: 35, blur: 20 });
+                overlays['Heatmap تراکم'] = heatLayer;
+            }
+        }catch(e){ console.warn('خطا در ایجاد هیت‌مپ:', e); }
+
+        L.control.layers(null, overlays).addTo(map);
+
+        // اضافه کردن تمامی لایه‌ها به نقشه به صورت پیش‌فرض (می‌توانید تغییر دهید)
+        treesLayer.addTo(map);
+        pathsLayer.addTo(map);
+        zonesLayer.addTo(map);
+
+    });
+
+    // --- قابلیت باز کردن/بستن پنل با کلیک روی لایه‌ها (در attachPopup انجام می‌شود) ---
+
+    // --- مثال: تابعی برای دستیابی به فایل‌ها و نمایش خطا در صورت نبود پوشه ---
+    // (توصیه عملی): مطمئن شوید که مسیر /geojson/ در ریشه پروژه شما وجود دارد و فایل‌ها با نام
+    // trees.geojson ، paths.geojson و zones.geojson در آن قرار دارند. در GitHub Pages باید این فایل‌ها
+    // هم‌عرض فایل index.html یا در مسیر صحیح آپلود شوند.
+
+    // --- قابلیت: زوم به حدود همه لایه‌ها ---
+    function zoomToAll(){
+        var group = L.featureGroup();
+        [treesLayer, pathsLayer, zonesLayer].forEach(function(l){ l.eachLayer(function(layer){ group.addLayer(layer); }); });
+        if(group.getLayers().length) map.fitBounds(group.getBounds());
+    }
+
+    // اگر خواستی بعد از لود اتوماتیک زوم کنیم
+    setTimeout(zoomToAll, 1200);
+
+</script>
+</body>
+</html>
